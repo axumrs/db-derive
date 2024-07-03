@@ -233,6 +233,9 @@ fn _db_meta_parser(
 }
 
 pub(crate) fn insert_ts(dm: &DbMeta) -> proc_macro2::TokenStream {
+    if dm.is_view {
+        panic!("视图不提供插入方法");
+    }
     let field_list = dm.insert_fileds();
     let field_list_str = field_list
         .iter()
