@@ -1,4 +1,4 @@
-#[proc_macro_derive(Db)]
+#[proc_macro_derive(Db, attributes(db))]
 pub fn db_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let ast = syn::parse_macro_input!(input as syn::DeriveInput);
     let name = ast.ident;
