@@ -54,6 +54,29 @@ impl DbMeta {
         self.fields.iter().map(|f| f.name.clone()).collect()
     }
 
+    pub(crate) fn list_filter_fields(&self) -> (Vec<Ident>, Vec<Type>) {
+        let mut ids = vec![];
+        let mut tys = vec![];
+
+        for f in self.fields.iter().filter(|f| f.list == true) {
+            ids.push(f.name.clone());
+            tys.push(f.ty.clone());
+        }
+        (ids, tys)
+    }
+    pub(crate) fn list_filter_fields_opt(&self) -> (Vec<Ident>, Vec<Type>, Vec<bool>) {
+        let mut ids = vec![];
+        let mut tys = vec![];
+        let mut ols = vec![];
+
+        for f in self.fields.iter().filter(|f| f.list_opt == true) {
+            ids.push(f.name.clone());
+            tys.push(f.ty.clone());
+            ols.push(f.opt_like);
+        }
+        (ids, tys, ols)
+    }
+
     pub(crate) fn pk_ident(&self) -> Ident {
         Ident::new(&self.pk, self.ident.clone().span())
     }
@@ -423,6 +446,151 @@ pub(crate) fn find_ts(dm: &DbMeta) -> proc_macro2::TokenStream {
 
             q.build_query_as().fetch_optional(e).await
         }
+    }
+}
+
+pub(crate) fn list_filter_ts(dm: &DbMeta) -> proc_macro2::TokenStream {
+    let ident = dm.ident.clone();
+    let ident_str = ident.to_string();
+    let filter_ident_str = format!("{}ListFilter", &ident_str);
+    let filter_ident = Ident::new(&filter_ident_str, ident.span().clone());
+    let (filter_fields, filter_types) = dm.list_filter_fields();
+    let (filter_fields_opt, filter_types_opt, _) = dm.list_filter_fields_opt();
+    let paginate_ident_str = format!("{}Paginate", &ident_str);
+    let paginate_ident = Ident::new(&paginate_ident_str, ident.span().clone());
+    let paginate_req_ident_str = format!("{}PaginateReq", &ident_str);
+    let paginate_req_ident = Ident::new(&paginate_req_ident_str, ident.span().clone());
+
+    quote! {
+         const DEFAULT_PAGE_SIZE:u32 = 30;
+         #[derive(Debug)]
+        pub struct #filter_ident {
+            pub pq:#paginate_req_ident,
+            #( pub #filter_fields: #filter_types, )*
+            #( pub #filter_fields_opt: ::std::option::Option<#filter_types_opt>, )*
+        }
+           #[derive(Debug)]
+        pub struct #paginate_req_ident {
+              pub page:u32,
+            pub page_size:u32,
+        }
+        impl #paginate_req_ident {
+            pub fn new(page:u32) -> Self {
+                Self {page, page_size:DEFAULT_PAGE_SIZE}
+            }
+        }
+
+           #[derive(Debug)]
+        pub struct #paginate_ident {
+            pub total:u32,
+            pub total_page:u32,
+            pub page:u32,
+            pub page_size:u32,
+            pub data: Vec<#ident>,
+        }
+        impl #paginate_ident {
+            pub fn new(total:u32, page:u32, page_size:u32, data:Vec<#ident>) -> Self {
+                let total_page = f64::ceil(total as f64/page_size as f64) as u32;
+                Self {
+                    total,
+                    page,
+                    total_page,
+                    page_size,
+                    data,
+                }
+            }
+            pub fn quick(total:i64, p:&#paginate_req_ident, data:Vec<#ident>) -> Self {
+                Self::new(total as u32, p.page, p.page_size, data)
+            }
+        }
+    }
+}
+
+pub(crate) fn list_ts(dm: &DbMeta) -> proc_macro2::TokenStream {
+    let ident = dm.ident.clone();
+    let ident_str = ident.to_string();
+    let filter_ident_str = format!("{}ListFilter", &ident_str);
+    let filter_ident = Ident::new(&filter_ident_str, ident.span().clone());
+
+    let (filter_fields, _) = dm.list_filter_fields();
+    let filter_fields_str = filter_fields
+        .iter()
+        .map(|f| format!("{:?}", f.to_string()))
+        .collect::<Vec<_>>();
+    let (filter_fields_opt, _, filter_like_opt) = dm.list_filter_fields_opt();
+    let filter_fields_opt_str = filter_fields_opt
+        .iter()
+        .map(|f| format!("{:?}", f.to_string()))
+        .collect::<Vec<_>>();
+
+    let fields = dm.all_fields();
+    let fields_str_arr = fields
+        .iter()
+        .map(|f| format!("{:?}", f.to_string()))
+        .collect::<Vec<_>>();
+    let fields_str = fields_str_arr.join(", ");
+    let sql = format!("SELECT {} FROM {:?} WHERE 1=1", &fields_str, &dm.table);
+    let sql_count = format!("SELECT COUNT(*) FROM {:?} WHERE 1=1", &dm.table);
+
+    let paginate_ident_str = format!("{}Paginate", &ident_str);
+    let paginate_ident = Ident::new(&paginate_ident_str, ident.span().clone());
+
+    quote! {
+        pub async fn list(p:&::sqlx::PgPool, f:&#filter_ident) -> ::sqlx::Result<#paginate_ident> {
+            let mut tx = p.begin().await?;
+            let data = Self::list_data(&mut *tx,f).await?;
+            let count = Self::list_count(&mut *tx,f).await?;
+            tx.commit().await?;
+            Ok(#paginate_ident::quick(count,&f.pq,data))
+        }
+        pub async fn list_data<'a>(e: impl  ::sqlx::PgExecutor<'a>,f:&#filter_ident) -> ::sqlx::Result<Vec<#ident>>{
+            let mut q = ::sqlx::QueryBuilder::new(#sql);
+
+            #(
+
+                    q.push(format!(" AND {} = ", &#filter_fields_str)).push_bind(&f.#filter_fields);
+
+            )*
+
+            #(
+                if let Some(v) = &f.#filter_fields_opt {
+                    if #filter_like_opt {
+                        let param = format!("%{}%", v);
+                        q.push(format!(" AND {} ILIKE ", &#filter_fields_opt_str)).push_bind(param);
+                    } else {
+                        q.push(format!(" AND {} = ", &#filter_fields_opt_str)).push_bind(v);
+                    }
+                }
+            )*
+
+
+            q.build_query_as().fetch_all(e).await
+        }
+        pub async fn list_count<'a>(e: impl  ::sqlx::PgExecutor<'a>,f:&#filter_ident) -> ::sqlx::Result<i64>{
+            let mut q = ::sqlx::QueryBuilder::new(#sql_count);
+
+             #(
+
+                    q.push(format!(" AND {} = ", &#filter_fields_str)).push_bind(&f.#filter_fields);
+
+            )*
+
+            #(
+                if let Some(v) = &f.#filter_fields_opt {
+                    if #filter_like_opt {
+                        let param = format!("%{}%", v);
+                        q.push(format!(" AND {} ILIKE ", &#filter_fields_opt_str)).push_bind(param);
+                    } else {
+                        q.push(format!(" AND {} = ", &#filter_fields_opt_str)).push_bind(v);
+                    }
+                }
+            )*
+
+            let count:(i64,)=q.build_query_as().fetch_one(e).await?;
+            Ok(count.0)
+        }
+
+
     }
 }
 
