@@ -10,12 +10,16 @@ pub fn db_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let update_ts = db::update_ts(&dm);
     let del_ts = db::del_ts(&dm);
 
+    let find_by_ts = db::find_by_ts(&dm);
+
     quote::quote! {
         impl #name {
             #insert_ts
             #update_ts
             #del_ts
         }
+
+        #find_by_ts
     }
     .into()
 }

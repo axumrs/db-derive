@@ -29,6 +29,16 @@ impl DbMeta {
             .collect()
     }
 
+    pub(crate) fn find_by_fileds(&self) -> (Vec<Ident>, Vec<Type>) {
+        let mut ids = vec![];
+        let mut tys = vec![];
+        for f in self.fields.iter().filter(|f| f.find) {
+            ids.push(f.name.clone());
+            tys.push(f.ty.clone());
+        }
+        (ids, tys)
+    }
+
     pub(crate) fn pk_ident(&self) -> Ident {
         Ident::new(&self.pk, self.ident.clone().span())
     }
@@ -318,4 +328,39 @@ pub(crate) fn del_ts(dm: &DbMeta) -> proc_macro2::TokenStream {
             Ok(aff)
         }
     }
+}
+
+pub(crate) fn find_by_ts(dm: &DbMeta) -> proc_macro2::TokenStream {
+    let ident = &dm.ident;
+    let find_by_ident_str = format!("{}FindBy", ident.to_string());
+    let find_by_ident = Ident::new(&find_by_ident_str, dm.ident.span());
+    let (find_by_origin_fields, find_by_types) = dm.find_by_fileds();
+    let find_by_fields = find_by_origin_fields
+        .iter()
+        .map(|f| _gen_entity_ident(f.to_owned()))
+        .collect::<Vec<_>>();
+    quote! {
+        pub enum #find_by_ident {
+            #( #find_by_fields(#find_by_types), )*
+        }
+    }
+}
+
+fn _gen_entity_ident(idt: Ident) -> Ident {
+    let mut ss = String::new();
+
+    for (idx, c) in idt.to_string().chars().enumerate() {
+        if idx == 0 {
+            ss.push(c.to_ascii_uppercase());
+            continue;
+        }
+        // TODO
+        // if c == '_' {
+
+        //     continue;
+        // }
+        ss.push(c);
+    }
+
+    Ident::new(&ss, idt.span())
 }
