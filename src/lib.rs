@@ -1,14 +1,14 @@
 #[proc_macro_derive(Db)]
 pub fn db_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    println!("{:#?}", input);
+    let ast = syn::parse_macro_input!(input as syn::DeriveInput);
+    let name = ast.ident;
 
-    r#"
-    impl User {
-        pub fn hi(&self) -> &'static str {
-            "Hello, axum.rs!"
+    quote::quote! {
+        impl #name {
+            pub fn hi(&self) -> &'static str {
+                "Hello, axum.rs!"
+            }
         }
     }
-    "#
-    .parse()
-    .unwrap()
+    .into()
 }
