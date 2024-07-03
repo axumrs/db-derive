@@ -10,5 +10,7 @@ pub struct User {
 }
 
 fn main() {
-    let _u = User::default();
+    let u = User::default();
+    let s = u.hi();
+    println!("{}", s);
 }
