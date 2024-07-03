@@ -1,6 +1,7 @@
 use quote::quote;
 use syn::{
     parse_macro_input, punctuated::Punctuated, token::Comma, DeriveInput, Field, Ident, LitStr,
+    Type,
 };
 
 #[derive(Debug)]
@@ -9,6 +10,7 @@ pub(crate) struct DbMeta {
     pub(crate) table: String,
     pub(crate) pk: String,
     pub(crate) is_view: bool,
+    pub(crate) fields: Vec<DbField>,
 }
 
 pub(crate) struct DbMetaParser {
@@ -25,6 +27,19 @@ impl std::default::Default for DbMetaParser {
             is_view: false,
         }
     }
+}
+
+#[derive(Debug)]
+pub(crate) struct DbField {
+    pub(crate) name: Ident,
+    pub(crate) ty: Type,
+    pub(crate) skip_update: bool,
+    pub(crate) skip_insert: bool,
+    pub(crate) find: bool,
+    pub(crate) find_opt: bool,
+    pub(crate) list: bool,
+    pub(crate) list_opt: bool,
+    pub(crate) opt_like: bool,
 }
 
 /// 解析字段
@@ -51,6 +66,7 @@ pub(crate) fn parse_db_meta(ast: &DeriveInput) -> DbMeta {
         table,
         pk: "id".to_string(),
         is_view: false,
+        fields: vec![],
     };
 
     for a in ast.attrs.iter() {
@@ -69,6 +85,76 @@ pub(crate) fn parse_db_meta(ast: &DeriveInput) -> DbMeta {
             }
         }
     }
+
+    // 解析字段
+    let meta_fields = parse_fields(ast);
+
+    let mut fields = vec![];
+
+    // 字段属性
+    for f in meta_fields {
+        let name = f.ident.clone();
+        let ty = f.ty.clone();
+        let attrs = f
+            .attrs
+            .clone()
+            .into_iter()
+            .filter(|a| a.path().is_ident("db"))
+            .collect::<Vec<_>>();
+
+        let mut db_field = DbField {
+            name: name.unwrap(),
+            ty,
+            skip_insert: false,
+            skip_update: false,
+            find: false,
+            find_opt: false,
+            list: false,
+            list_opt: false,
+            opt_like: false,
+        };
+
+        // 解析字段属性
+        for a in attrs.iter() {
+            a.parse_nested_meta(|mt| {
+                if mt.path.is_ident("skip_update") {
+                    db_field.skip_update = true;
+                    return Ok(());
+                }
+                if mt.path.is_ident("skip_insert") {
+                    db_field.skip_insert = true;
+                    return Ok(());
+                }
+                if mt.path.is_ident("find") {
+                    db_field.find = true;
+                    return Ok(());
+                }
+                if mt.path.is_ident("find_opt") {
+                    db_field.find_opt = true;
+                    return Ok(());
+                }
+                if mt.path.is_ident("list") {
+                    db_field.list = true;
+                    return Ok(());
+                }
+                if mt.path.is_ident("list_opt") {
+                    db_field.list_opt = true;
+                    return Ok(());
+                }
+                if mt.path.is_ident("opt_like") {
+                    db_field.opt_like = true;
+                    return Ok(());
+                }
+
+                Ok(())
+            })
+            .unwrap();
+        }
+        fields.push(db_field);
+    }
+
+    dm.fields = fields;
+
     dm
 }
 
