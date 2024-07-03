@@ -38,6 +38,21 @@ impl DbMeta {
         }
         (ids, tys)
     }
+    pub(crate) fn find_filter_fileds(&self) -> (Vec<Ident>, Vec<Type>, Vec<bool>) {
+        let mut ids = vec![];
+        let mut tys = vec![];
+        let mut opts_like = vec![];
+        for f in self.fields.iter().filter(|f| f.find_opt) {
+            ids.push(f.name.clone());
+            tys.push(f.ty.clone());
+            opts_like.push(f.opt_like);
+        }
+        (ids, tys, opts_like)
+    }
+
+    pub(crate) fn all_fields(&self) -> Vec<Ident> {
+        self.fields.iter().map(|f| f.name.clone()).collect()
+    }
 
     pub(crate) fn pk_ident(&self) -> Ident {
         Ident::new(&self.pk, self.ident.clone().span())
@@ -339,9 +354,74 @@ pub(crate) fn find_by_ts(dm: &DbMeta) -> proc_macro2::TokenStream {
         .iter()
         .map(|f| _gen_entity_ident(f.to_owned()))
         .collect::<Vec<_>>();
+    let find_filter_ident_str = format!("{}FindFilter", ident.to_string());
+    let find_filter_ident = Ident::new(&find_filter_ident_str, dm.ident.span());
+    let (find_filter_fields, find_filter_types, _) = dm.find_filter_fileds();
     quote! {
         pub enum #find_by_ident {
             #( #find_by_fields(#find_by_types), )*
+        }
+        pub struct #find_filter_ident {
+            pub by: #find_by_ident,
+            #( pub #find_filter_fields: ::std::option::Option<#find_filter_types>,)*
+        }
+    }
+}
+
+pub(crate) fn find_ts(dm: &DbMeta) -> proc_macro2::TokenStream {
+    let ident = dm.ident.clone();
+    let ident_str = ident.to_string();
+
+    let find_by_ident_str = format!("{}FindBy", &ident_str);
+    let find_by_ident = Ident::new(&find_by_ident_str, ident.span().clone());
+    let find_ident_str = format!("{}FindFilter", &ident_str);
+    let find_ident = Ident::new(&find_ident_str, ident.span().clone());
+
+    let (find_by_origin_fields, _) = dm.find_by_fileds();
+    let find_by_fields = find_by_origin_fields
+        .iter()
+        .map(|f| _gen_entity_ident(f.to_owned()))
+        .collect::<Vec<_>>();
+    let find_by_fields_str = find_by_origin_fields
+        .iter()
+        .map(|f| format!("{:?}", f.to_string()))
+        .collect::<Vec<_>>();
+
+    let (find_filter_fields, _, find_filter_opt_like) = dm.find_filter_fileds();
+    let find_filter_fields_str = find_filter_fields
+        .iter()
+        .map(|f| format!("{:?}", f.to_string()))
+        .collect::<Vec<_>>();
+
+    let fields = dm.all_fields();
+    let fields_str_arr = fields
+        .iter()
+        .map(|f| format!("{:?}", f.to_string()))
+        .collect::<Vec<_>>();
+    let fields_str = fields_str_arr.join(", ");
+    let sql = format!("SELECT {} FROM {:?} WHERE 1=1", &fields_str, &dm.table);
+
+    quote! {
+        pub async fn find<'a>(e: impl  ::sqlx::PgExecutor<'a>, f:&#find_ident) -> ::sqlx::Result<::std::option::Option<Self>> {
+
+            let mut q = ::sqlx::QueryBuilder::new(#sql);
+             match &f.by {
+                    #( #find_by_ident::#find_by_fields(v) => { q.push(format!(" AND {} = ", &#find_by_fields_str)).push_bind(v); }, )*
+                };
+
+            #(
+                if let Some(v) = &f.#find_filter_fields {
+
+                    if #find_filter_opt_like {
+                        let parm = format!("%{}%", v);
+                        q.push(format!(" AND {} ILIKE ", &#find_filter_fields_str)).push_bind(parm);
+                    } else {
+                          q.push(format!(" AND {} =", &#find_filter_fields_str)).push_bind(v);
+                    }
+                }
+            )*
+
+            q.build_query_as().fetch_optional(e).await
         }
     }
 }
