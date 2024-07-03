@@ -13,6 +13,28 @@ pub(crate) struct DbMeta {
     pub(crate) fields: Vec<DbField>,
 }
 
+impl DbMeta {
+    pub(crate) fn insert_fileds(&self) -> Vec<Ident> {
+        self.fields
+            .iter()
+            .filter(|f| f.skip_insert == false)
+            .map(|f| f.name.clone())
+            .collect()
+    }
+    pub(crate) fn pk_ident(&self) -> Ident {
+        Ident::new(&self.pk, self.ident.clone().span())
+    }
+    pub(crate) fn pk_type(&self) -> Type {
+        self.fields
+            .iter()
+            .find(|f| f.name.to_string() == self.pk)
+            .take()
+            .unwrap()
+            .ty
+            .clone()
+    }
+}
+
 pub(crate) struct DbMetaParser {
     pub(crate) table: Option<LitStr>,
     pub(crate) pk: Option<LitStr>,
@@ -208,4 +230,30 @@ fn _db_meta_parser(
     parse_macro_input!(tokens with parser);
 
     quote! {}.into()
+}
+
+pub(crate) fn insert_ts(dm: &DbMeta) -> proc_macro2::TokenStream {
+    let field_list = dm.insert_fileds();
+    let field_list_str = field_list
+        .iter()
+        .map(|f| format!(r#""{}""#, f.to_string()))
+        .collect::<Vec<_>>()
+        .join(",");
+    let table = dm.table.clone();
+    let sql = format!("INSERT INTO {:?} ({})", &table, &field_list_str);
+    let pk = dm.pk_ident();
+    let pk_type = dm.pk_type();
+
+    quote! {
+        pub async fn insert<'a>(&self, e: impl  ::sqlx::PgExecutor<'a>) -> ::sqlx::Result<#pk_type> {
+            let id = self.#pk.clone();
+           let sql = #sql;
+           let mut q = ::sqlx::QueryBuilder::new(sql);
+           q.push_values(&[self], |mut b, m| {
+                #(b.push_bind(&m.#field_list);)*
+           });
+           q.build().execute(e).await?;
+            Ok(id)
+        }
+    }
 }
