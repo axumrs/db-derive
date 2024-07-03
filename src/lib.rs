@@ -7,10 +7,14 @@ pub fn db_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let name = &dm.ident;
 
     let insert_ts = db::insert_ts(&dm);
+    let update_ts = db::update_ts(&dm);
+    let del_ts = db::del_ts(&dm);
 
     quote::quote! {
         impl #name {
             #insert_ts
+            #update_ts
+            #del_ts
         }
     }
     .into()

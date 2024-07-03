@@ -21,6 +21,14 @@ impl DbMeta {
             .map(|f| f.name.clone())
             .collect()
     }
+    pub(crate) fn update_fileds(&self) -> Vec<Ident> {
+        self.fields
+            .iter()
+            .filter(|f| f.skip_update == false)
+            .map(|f| f.name.clone())
+            .collect()
+    }
+
     pub(crate) fn pk_ident(&self) -> Ident {
         Ident::new(&self.pk, self.ident.clone().span())
     }
@@ -257,6 +265,57 @@ pub(crate) fn insert_ts(dm: &DbMeta) -> proc_macro2::TokenStream {
            });
            q.build().execute(e).await?;
             Ok(id)
+        }
+    }
+}
+
+pub(crate) fn update_ts(dm: &DbMeta) -> proc_macro2::TokenStream {
+    let field_list = dm.update_fileds();
+    let field_list_str = field_list
+        .iter()
+        .map(|f| format!("{:?} = ", f.to_string()))
+        .collect::<Vec<_>>();
+    let field_list_com = field_list
+        .iter()
+        .enumerate()
+        .map(|(idx, _)| format!("{}", if idx < field_list.len() - 1 { ", " } else { "" }))
+        .collect::<Vec<_>>();
+
+    let table = dm.table.clone();
+    let sql = format!("UPDATE {:?} SET ", &table,);
+    let pk = dm.pk_ident().clone();
+    let pk_str = pk.to_string();
+
+    quote! {
+        pub async fn update<'a>(&self, e: impl  ::sqlx::PgExecutor<'a>) -> ::sqlx::Result<u64> {
+            let sql = #sql;
+            let mut q = ::sqlx::QueryBuilder::new(sql);
+            #(
+                q.push(#field_list_str)
+                .push_bind(&self.#field_list)
+                .push(#field_list_com);
+            )*
+
+            q.push(format!(" WHERE {} = ", #pk_str)).push_bind(&self.#pk);
+
+            let aff = q.build().execute(e).await?.rows_affected();
+            Ok(aff)
+        }
+    }
+}
+pub(crate) fn del_ts(dm: &DbMeta) -> proc_macro2::TokenStream {
+    let table = dm.table.clone();
+    let pk = dm.pk_ident().clone();
+    let pk_str = pk.to_string();
+    let sql = format!("DELETE FROM {:?} WHERE {:?} = ", &table, &pk_str);
+
+    quote! {
+        pub async fn delete<'a>(&self, e: impl  ::sqlx::PgExecutor<'a>) -> ::sqlx::Result<u64> {
+            let sql = #sql;
+            let mut q = ::sqlx::QueryBuilder::new(sql);
+            q.push_bind(&self.#pk);
+            let aff = q.build().execute(e).await?.rows_affected();
+            Ok(aff)
         }
     }
 }
