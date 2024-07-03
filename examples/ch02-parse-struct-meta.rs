@@ -10,7 +10,10 @@ pub struct User {
 }
 
 fn main() {
-    let u = User::default();
-    let s = u.hi();
-    println!("{}", s);
+    let mut u = User::default();
+    // 调用 setter
+    u.set_email("team@axum.rs".into());
+    // 调用 getter
+    let email = u.email();
+    println!("email is: {}", email);
 }
