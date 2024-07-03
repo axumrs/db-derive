@@ -1,0 +1,11 @@
+[package]
+name = "db-derive"
+version = "0.1.0"
+edition = "2021"
+authors = ["axum.rs <team@axum.rs>"]
+license = "MIT"
+repository = "https://github.com/axumrs/db-derive"
+homepage = "https://axum.rs"
+description = "axum.rs专题：使用过程宏实现CRUD操作"
+
+[dependencies]
